@@ -27,6 +27,7 @@ MODELOS = {
     "Claude 3.5 Sonnet": {"encoding": "cl100k_base", "contexto": 200_000, "precio_in": 3.00, "precio_out": 15.00},
     "Claude 3.5 Haiku": {"encoding": "cl100k_base", "contexto": 200_000, "precio_in": 0.80, "precio_out": 4.00},
     # Google
+    "Gemini 3.5 Pro": {"encoding": "o200k_base", "contexto": 2_000_000, "precio_in": 1.25, "precio_out": 10.00},
     "Gemini 3.5 Flash": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 1.50, "precio_out": 9.00},
     "Gemini 3.1 Pro": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 2.00, "precio_out": 12.00},
     "Gemini 3 Flash": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 0.50, "precio_out": 3.00},
@@ -115,6 +116,38 @@ def analizar_prompt(texto):
 # Interfaz
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Predicción de Consumo de Tokens", page_icon="🧮", layout="wide")
+
+ESTILOS = """
+<style>
+/* Botón de cálculo: compacto, con degradado y bordes redondeados */
+div[data-testid="stForm"] button {
+    width: 100%;
+    min-height: 2.25rem;
+    padding: 0.3rem 1rem;
+    border: none !important;
+    border-radius: 999px !important;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #ffffff !important;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+div[data-testid="stForm"] button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45);
+}
+
+/* Responsive: ajustes para tablets y móviles */
+@media (max-width: 768px) {
+    .block-container { padding-left: 1rem; padding-right: 1rem; }
+    h1 { font-size: 1.6rem !important; }
+    div[data-testid="stMetricValue"] { font-size: 1.25rem; }
+}
+</style>
+"""
+st.markdown(ESTILOS, unsafe_allow_html=True)
 st.title("🧮 Herramienta de Predicción de Consumo y Optimización de Prompts")
 st.caption("Estima el costo total de una tarea (entrada + salida) y detecta ineficiencias en tu prompt.")
 
@@ -132,11 +165,16 @@ with st.sidebar:
     )
     tokens_salida = TIPOS_RESPUESTA[tipo_respuesta]
 
-prompt = st.text_area(
-    "✍️ Escribe tu prompt",
-    height=260,
-    placeholder="Pega aquí el prompt que enviarás a la IA...",
-)
+# Dentro de un formulario, Ctrl+Intro y el botón envían el texto.
+with st.form("formulario_prompt"):
+    prompt = st.text_area(
+        "✍️ Escribe tu prompt (Ctrl+Intro o botón para calcular)",
+        height=260,
+        placeholder="Pega aquí el prompt que enviarás a la IA...",
+    )
+    _, col_boton = st.columns([4, 1])
+    with col_boton:
+        st.form_submit_button("🧮 Calcular", type="primary")
 
 # --- Cálculo predictivo ---------------------------------------------------
 tokens_entrada = contar_tokens(prompt, modelo["encoding"])
