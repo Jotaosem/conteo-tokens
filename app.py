@@ -7,12 +7,21 @@ import tiktoken
 
 # ---------------------------------------------------------------------------
 # Configuración de modelos
-# Precios orientativos en USD por 1M de tokens. Verifícalos en la web de
-# cada proveedor antes de usarlos para presupuestar.
+# Precios en USD por 1M de tokens (tarifa estándar, sin batch ni caché).
+# Fuentes oficiales consultadas el 2026-10-26:
+#   OpenAI:    https://developers.openai.com/api/docs/pricing
+#   Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+#   Google:    https://ai.google.dev/gemini-api/docs/pricing
+# "umbral" y "precio_*_largo": si el prompt supera el umbral, se usa la tarifa larga.
+# Los límites de contexto no aparecen en esas páginas: son de otras fuentes.
 # ---------------------------------------------------------------------------
 MODELOS = {
     # OpenAI
-    "GPT-5.4": {"encoding": "o200k_base", "contexto": 272_000, "precio_in": 2.50, "precio_out": 15.00},
+    "GPT-5.4": {
+        "encoding": "o200k_base", "contexto": 272_000,
+        "precio_in": 2.50, "precio_out": 15.00,
+        "umbral": 272_000, "precio_in_largo": 5.00, "precio_out_largo": 22.50,
+    },
     "GPT-5.4 mini": {"encoding": "o200k_base", "contexto": 400_000, "precio_in": 0.75, "precio_out": 4.50},
     "GPT-5.4 nano": {"encoding": "o200k_base", "contexto": 400_000, "precio_in": 0.20, "precio_out": 1.25},
     "GPT-4o": {"encoding": "o200k_base", "contexto": 128_000, "precio_in": 2.50, "precio_out": 10.00},
@@ -20,26 +29,32 @@ MODELOS = {
     # Anthropic
     "Claude Opus 5.5": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 4.00, "precio_out": 20.00},
     "Claude Sonnet 5.5": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 2.00, "precio_out": 10.00},
-    "Claude Haiku 5.5": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 0.10, "precio_out": 0.50},
+    "Claude Haiku 5.5": {
+        "encoding": "cl100k_base", "contexto": 1_000_000,
+        "precio_in": 0.10, "precio_out": 0.50,
+        "umbral": 100_000, "precio_in_largo": 0.50, "precio_out_largo": 2.50,
+    },
     "Claude Opus 4.6": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 5.00, "precio_out": 25.00},
     "Claude Sonnet 4.6": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 3.00, "precio_out": 15.00},
     "Claude Haiku 4.5": {"encoding": "cl100k_base", "contexto": 200_000, "precio_in": 1.00, "precio_out": 5.00},
-    "Claude 3.5 Sonnet": {"encoding": "cl100k_base", "contexto": 200_000, "precio_in": 3.00, "precio_out": 15.00},
-    "Claude 3.5 Haiku": {"encoding": "cl100k_base", "contexto": 200_000, "precio_in": 0.80, "precio_out": 4.00},
     # Google
-    "Gemini 3.5 Pro": {"encoding": "o200k_base", "contexto": 2_000_000, "precio_in": 1.25, "precio_out": 10.00},
-    "Gemini 3.5 Flash": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 1.50, "precio_out": 9.00},
-    "Gemini 3.1 Pro": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 2.00, "precio_out": 12.00},
+    "Gemini 3.1 Pro": {
+        "encoding": "o200k_base", "contexto": 1_000_000,
+        "precio_in": 2.00, "precio_out": 12.00,
+        "umbral": 200_000, "precio_in_largo": 4.00, "precio_out_largo": 18.00,
+    },
     "Gemini 3 Flash": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 0.50, "precio_out": 3.00},
     "Gemini 3.1 Flash-Lite": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 0.25, "precio_out": 1.50},
-    "Gemini 2.5 Pro": {"encoding": "o200k_base", "contexto": 1_048_576, "precio_in": 1.25, "precio_out": 10.00},
+    "Gemini 2.5 Pro": {
+        "encoding": "o200k_base", "contexto": 1_048_576,
+        "precio_in": 1.25, "precio_out": 10.00,
+        "umbral": 200_000, "precio_in_largo": 2.50, "precio_out_largo": 15.00,
+    },
     "Gemini 2.5 Flash": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 0.30, "precio_out": 2.50},
     "Gemini 2.5 Flash-Lite": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 0.10, "precio_out": 0.40},
-    "Gemini 1.5 Pro": {"encoding": "o200k_base", "contexto": 2_000_000, "precio_in": 1.25, "precio_out": 5.00},
-    "Gemini 1.5 Flash": {"encoding": "o200k_base", "contexto": 1_000_000, "precio_in": 0.075, "precio_out": 0.30},
 }
 
-# Tokens de salida estimados según el tipo de respuesta esperado.
+# Tokens de salida estimados según el tipo de respuesta esperado (supuestos de uso, no datos del proveedor).
 TIPOS_RESPUESTA = {
     "Corta / Directa (Código breve, confirmaciones, resúmenes breves)": 300,
     "Media / Detallada (Análisis estándar, explicaciones paso a paso)": 1_200,
@@ -76,6 +91,15 @@ def contar_tokens(texto, nombre_encoding):
     except Exception:
         st.warning("No se pudo cargar tiktoken; se usa una estimación de ~4 caracteres por token.")
         return max(1, len(texto) // 4)
+
+
+def calcular_costo(modelo, tokens_entrada, tokens_salida):
+    """Devuelve (costo en USD, si se aplicó la tarifa de prompt largo)."""
+    largo = "umbral" in modelo and tokens_entrada > modelo["umbral"]
+    precio_in = modelo["precio_in_largo"] if largo else modelo["precio_in"]
+    precio_out = modelo["precio_out_largo"] if largo else modelo["precio_out"]
+    costo = (tokens_entrada * precio_in + tokens_salida * precio_out) / 1_000_000
+    return costo, largo
 
 
 def analizar_prompt(texto):
@@ -163,7 +187,16 @@ with st.sidebar:
         list(TIPOS_RESPUESTA.keys()),
         index=1,
     )
-    tokens_salida = TIPOS_RESPUESTA[tipo_respuesta]
+    # La clave cambia con el preset: al elegir otro tipo, el valor vuelve al estimado.
+    preset_salida = TIPOS_RESPUESTA[tipo_respuesta]
+    tokens_salida = st.number_input(
+        "Tokens de salida estimados",
+        min_value=0,
+        value=preset_salida,
+        step=50,
+        key=f"salida_{preset_salida}",
+        help="Valor sugerido según el tipo de respuesta. Puedes ajustarlo a tu caso.",
+    )
 
 # Dentro de un formulario, Ctrl+Intro y el botón envían el texto.
 with st.form("formulario_prompt"):
@@ -179,14 +212,16 @@ with st.form("formulario_prompt"):
 # --- Cálculo predictivo ---------------------------------------------------
 tokens_entrada = contar_tokens(prompt, modelo["encoding"])
 total_predicho = tokens_entrada + tokens_salida
-costo_usd = (tokens_entrada * modelo["precio_in"] + tokens_salida * modelo["precio_out"]) / 1_000_000
+costo_usd, usa_tarifa_larga = calcular_costo(modelo, tokens_entrada, tokens_salida)
 
 st.subheader("📊 Predicción de la tarea")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Tokens de entrada", f"{tokens_entrada:,}", help="Tokens de tu prompt (aprox. para modelos no OpenAI)")
-c2.metric("Tokens de salida estimados", f"{tokens_salida:,}", help="Según el tipo de respuesta elegido")
+c2.metric("Tokens de salida estimados", f"{tokens_salida:,}", help="Valor sugerido o el que ajustaste en la barra lateral")
 c3.metric("Consumo Total Predicho de la Tarea", f"{total_predicho:,}")
-c4.metric("Costo estimado", f"${costo_usd:,.4f} USD", help="Precios orientativos, ver MODELOS en app.py")
+c4.metric("Costo estimado", f"${costo_usd:,.4f} USD", help="Tarifa estándar oficial del proveedor (sin caché ni batch)")
+if usa_tarifa_larga:
+    st.caption(f"ℹ️ El prompt supera el umbral de tarifa larga de {nombre_modelo}; el costo usa precios de prompt largo.")
 
 # --- Barra de progreso del contexto --------------------------------------
 st.subheader("🧠 Contexto total acumulado")
