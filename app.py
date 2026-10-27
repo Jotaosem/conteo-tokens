@@ -135,6 +135,29 @@ TIPOS_RESPUESTA = {
     "Larga / Compleja (Programación completa, reportes extensos, redacción creativa)": 3_500,
 }
 
+# Tokens de razonamiento por nivel. Son supuestos: los proveedores no publican rangos por nivel
+# (OpenAI dice "de unos cientos a decenas de miles"; Anthropic exige un mínimo de 1.024 en budget_tokens).
+ESTIMACION_RAZONAMIENTO = {
+    "none": 0, "minimal": 256, "low": 1_024, "medium": 4_096, "high": 16_384, "xhigh": 32_768,
+}
+NIVELES_OPENAI = ["none", "minimal", "low", "medium", "high", "xhigh"]
+NIVELES_ANTHROPIC = ["low", "medium", "high"]
+NIVELES_GOOGLE = ["minimal", "low", "medium", "high"]
+SIN_RAZONAMIENTO = {
+    "GPT-4.1", "GPT-4.1 mini", "GPT-4.1 nano", "GPT-4o", "GPT-4o mini", "Chat Latest", "Claude Haiku 4.5",
+}
+
+
+def niveles_disponibles(nombre):
+    """Niveles de razonamiento que acepta el modelo (lista vacía si no razona)."""
+    if nombre in SIN_RAZONAMIENTO:
+        return []
+    if nombre.startswith("Claude"):
+        return NIVELES_ANTHROPIC
+    if nombre.startswith("Gemini"):
+        return NIVELES_GOOGLE
+    return NIVELES_OPENAI
+
 # ---------------------------------------------------------------------------
 # Patrones de ineficiencia
 # ---------------------------------------------------------------------------
@@ -275,6 +298,27 @@ with st.sidebar:
         help="Valor sugerido según el tipo de respuesta. Puedes ajustarlo a tu caso.",
     )
 
+    niveles = niveles_disponibles(nombre_modelo)
+    if niveles:
+        nivel_razonamiento = st.select_slider(
+            "Nivel de razonamiento",
+            options=niveles,
+            value="medium",
+            key=f"nivel_{nombre_modelo}",
+            help="El razonamiento se cobra como salida y ocupa la ventana de contexto.",
+        )
+        tokens_razonamiento = st.number_input(
+            "Tokens de razonamiento estimados",
+            min_value=0,
+            value=ESTIMACION_RAZONAMIENTO[nivel_razonamiento],
+            step=256,
+            key=f"razonamiento_{nombre_modelo}_{nivel_razonamiento}",
+            help="Supuesto según el nivel. Ajústalo con tu experiencia real.",
+        )
+    else:
+        tokens_razonamiento = 0
+        st.caption("Este modelo no usa razonamiento: no se suma ningún token.")
+
 # Dentro de un formulario, Ctrl+Intro y el botón envían el texto.
 with st.form("formulario_prompt"):
     prompt = st.text_area(
@@ -288,35 +332,20 @@ with st.form("formulario_prompt"):
 
 # --- Cálculo predictivo ---------------------------------------------------
 tokens_entrada = contar_tokens(prompt, modelo["encoding"])
-total_predicho = tokens_entrada + tokens_salida
-costo_usd, usa_tarifa_larga = calcular_costo(modelo, tokens_entrada, tokens_salida)
+# El razonamiento se cobra como salida y ocupa contexto, así que se suma a la salida.
+tokens_salida_total = tokens_salida + tokens_razonamiento
+total_predicho = tokens_entrada + tokens_salida_total
+costo_usd, usa_tarifa_larga = calcular_costo(modelo, tokens_entrada, tokens_salida_total)
 
 st.subheader("📊 Predicción de la tarea")
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Tokens de entrada", f"{tokens_entrada:,}", help="Tokens de tu prompt (aprox. para modelos no OpenAI)")
 c2.metric("Tokens de salida estimados", f"{tokens_salida:,}", help="Valor sugerido o el que ajustaste en la barra lateral")
-c3.metric("Consumo Total Predicho de la Tarea", f"{total_predicho:,}")
-c4.metric("Costo estimado", f"${costo_usd:,.4f} USD", help="Tarifa estándar oficial del proveedor (sin caché ni batch)")
+c3.metric("Tokens de razonamiento", f"{tokens_razonamiento:,}", help="Según el nivel de razonamiento elegido")
+c4.metric("Consumo Total Predicho de la Tarea", f"{total_predicho:,}")
+c5.metric("Costo estimado", f"${costo_usd:,.4f} USD", help="Tarifa estándar oficial del proveedor (sin caché ni batch)")
 if usa_tarifa_larga:
     st.caption(f"ℹ️ El prompt supera el umbral de tarifa larga de {nombre_modelo}; el costo usa precios de prompt largo.")
-
-# --- Comparativa de costo entre todos los modelos -------------------------
-st.subheader("⚖️ Comparativa de costo entre modelos")
-conteos = {}
-filas = []
-for nombre, datos in MODELOS.items():
-    encoding = datos["encoding"]
-    if encoding not in conteos:
-        conteos[encoding] = contar_tokens(prompt, encoding)
-    costo, _ = calcular_costo(datos, conteos[encoding], tokens_salida)
-    filas.append({"Modelo": nombre, "Costo estimado (USD)": costo, "Tokens de entrada": conteos[encoding]})
-comparativa = pd.DataFrame(filas).sort_values("Costo estimado (USD)").reset_index(drop=True)
-st.dataframe(
-    comparativa,
-    hide_index=True,
-    use_container_width=True,
-    column_config={"Costo estimado (USD)": st.column_config.NumberColumn(format="$%.5f")},
-)
 
 # --- Barra de progreso del contexto --------------------------------------
 st.subheader("🧠 Contexto total acumulado")
@@ -352,3 +381,23 @@ else:
 st.markdown("#### 🧰 Tácticas de ahorro de tokens")
 st.info("🌐 Traduce contextos masivos a inglés si es posible (el inglés gasta hasta un 40% menos tokens que el español).")
 st.info("🎯 Sustituye ejemplos redundantes por solo 1 o 2 casos de ejemplo bien estructurados (Few-Shot comprimido).")
+
+# --- Comparativa de costo entre todos los modelos (al final de la página) --
+st.subheader("⚖️ Comparativa de costo entre modelos")
+st.caption("Usa el mismo nivel de razonamiento en los modelos que lo soportan; los demás solo cuentan la salida.")
+conteos = {}
+filas = []
+for nombre, datos in MODELOS.items():
+    encoding = datos["encoding"]
+    if encoding not in conteos:
+        conteos[encoding] = contar_tokens(prompt, encoding)
+    salida_modelo = tokens_salida + (tokens_razonamiento if niveles_disponibles(nombre) else 0)
+    costo, _ = calcular_costo(datos, conteos[encoding], salida_modelo)
+    filas.append({"Modelo": nombre, "Costo estimado (USD)": costo, "Tokens de entrada": conteos[encoding]})
+comparativa = pd.DataFrame(filas).sort_values("Costo estimado (USD)").reset_index(drop=True)
+st.dataframe(
+    comparativa,
+    hide_index=True,
+    use_container_width=True,
+    column_config={"Costo estimado (USD)": st.column_config.NumberColumn(format="$%.5f")},
+)
