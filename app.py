@@ -2,21 +2,22 @@
 
 import re
 
+import pandas as pd
 import streamlit as st
 import tiktoken
 
 # ---------------------------------------------------------------------------
 # Configuración de modelos
 # Precios en USD por 1M de tokens (tarifa estándar, sin batch ni caché).
-# Fuentes oficiales consultadas el 2026-10-26:
-#   OpenAI:    https://developers.openai.com/api/docs/pricing
+# Fuentes oficiales consultadas el 2026-10-26 y 2026-10-27:
+#   OpenAI:    https://developers.openai.com/api/docs/pricing (tarifa estándar, contexto corto)
 #   Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 #   Google:    https://ai.google.dev/gemini-api/docs/pricing
 # "umbral" y "precio_*_largo": si el prompt supera el umbral, se usa la tarifa larga.
-# Los límites de contexto no aparecen en esas páginas: son de otras fuentes.
+# "contexto" = None cuando el proveedor no publica el límite de contexto.
 # ---------------------------------------------------------------------------
 MODELOS = {
-    # OpenAI (catálogo de modelos: developers.openai.com/api/docs/models)
+    # OpenAI (límite de contexto: catálogo de modelos cuando está publicado)
     "GPT-6 Astra": {
         "encoding": "o200k_base", "contexto": 1_050_000,
         "precio_in": 10.00, "precio_out": 50.00,
@@ -37,12 +38,68 @@ MODELOS = {
         "precio_in": 0.10, "precio_out": 0.50,
         "umbral": 272_000, "precio_in_largo": 0.20, "precio_out_largo": 0.75,
     },
+    "GPT-6 Sol": {
+        "encoding": "o200k_base", "contexto": None,
+        "precio_in": 2.00, "precio_out": 10.00,
+        "umbral": 272_000, "precio_in_largo": 4.00, "precio_out_largo": 15.00,
+    },
+    "GPT-5.6 Sol": {
+        "encoding": "o200k_base", "contexto": None,
+        "precio_in": 4.00, "precio_out": 20.00,
+        "umbral": 272_000, "precio_in_largo": 8.00, "precio_out_largo": 30.00,
+    },
+    "GPT-5.6 Terra": {
+        "encoding": "o200k_base", "contexto": None,
+        "precio_in": 2.00, "precio_out": 12.00,
+        "umbral": 272_000, "precio_in_largo": 4.00, "precio_out_largo": 18.00,
+    },
+    "GPT-5.6 Luna": {
+        "encoding": "o200k_base", "contexto": None,
+        "precio_in": 0.20, "precio_out": 1.20,
+        "umbral": 272_000, "precio_in_largo": 0.40, "precio_out_largo": 1.80,
+    },
+    "GPT-5.5": {
+        "encoding": "o200k_base", "contexto": None,
+        "precio_in": 5.00, "precio_out": 30.00,
+        "umbral": 272_000, "precio_in_largo": 10.00, "precio_out_largo": 45.00,
+    },
+    "GPT-5.5 Pro": {
+        "encoding": "o200k_base", "contexto": None,
+        "precio_in": 30.00, "precio_out": 180.00,
+        "umbral": 272_000, "precio_in_largo": 60.00, "precio_out_largo": 270.00,
+    },
     "GPT-5.4": {
-        "encoding": "o200k_base", "contexto": 272_000,
+        "encoding": "o200k_base", "contexto": None,
         "precio_in": 2.50, "precio_out": 15.00,
         "umbral": 272_000, "precio_in_largo": 5.00, "precio_out_largo": 22.50,
     },
+    "GPT-5.4 Pro": {
+        "encoding": "o200k_base", "contexto": None,
+        "precio_in": 30.00, "precio_out": 180.00,
+        "umbral": 272_000, "precio_in_largo": 60.00, "precio_out_largo": 270.00,
+    },
     "GPT-5.4 mini": {"encoding": "o200k_base", "contexto": 400_000, "precio_in": 0.75, "precio_out": 4.50},
+    "GPT-5.4 nano": {"encoding": "o200k_base", "contexto": 400_000, "precio_in": 0.20, "precio_out": 1.25},
+    "GPT-5.3 Codex": {"encoding": "o200k_base", "contexto": None, "precio_in": 1.75, "precio_out": 14.00},
+    "GPT-5.2": {"encoding": "o200k_base", "contexto": None, "precio_in": 1.75, "precio_out": 14.00},
+    "GPT-5.2 Pro": {"encoding": "o200k_base", "contexto": None, "precio_in": 21.00, "precio_out": 168.00},
+    "GPT-5.1": {"encoding": "o200k_base", "contexto": None, "precio_in": 1.25, "precio_out": 10.00},
+    "GPT-5": {"encoding": "o200k_base", "contexto": None, "precio_in": 1.25, "precio_out": 10.00},
+    "GPT-5 mini": {"encoding": "o200k_base", "contexto": None, "precio_in": 0.25, "precio_out": 2.00},
+    "GPT-5 nano": {"encoding": "o200k_base", "contexto": None, "precio_in": 0.05, "precio_out": 0.40},
+    "GPT-5 Pro": {"encoding": "o200k_base", "contexto": None, "precio_in": 15.00, "precio_out": 120.00},
+    "GPT-4.1": {"encoding": "o200k_base", "contexto": None, "precio_in": 2.00, "precio_out": 8.00},
+    "GPT-4.1 mini": {"encoding": "o200k_base", "contexto": None, "precio_in": 0.40, "precio_out": 1.60},
+    "GPT-4.1 nano": {"encoding": "o200k_base", "contexto": None, "precio_in": 0.10, "precio_out": 0.40},
+    "GPT-4o": {"encoding": "o200k_base", "contexto": 128_000, "precio_in": 2.50, "precio_out": 10.00},
+    "GPT-4o mini": {"encoding": "o200k_base", "contexto": 128_000, "precio_in": 0.15, "precio_out": 0.60},
+    "o1": {"encoding": "o200k_base", "contexto": None, "precio_in": 15.00, "precio_out": 60.00},
+    "o1-pro": {"encoding": "o200k_base", "contexto": None, "precio_in": 150.00, "precio_out": 600.00},
+    "o3-pro": {"encoding": "o200k_base", "contexto": None, "precio_in": 20.00, "precio_out": 80.00},
+    "o3": {"encoding": "o200k_base", "contexto": None, "precio_in": 2.00, "precio_out": 8.00},
+    "o3-mini": {"encoding": "o200k_base", "contexto": None, "precio_in": 1.10, "precio_out": 4.40},
+    "o4-mini": {"encoding": "o200k_base", "contexto": None, "precio_in": 1.10, "precio_out": 4.40},
+    "Chat Latest": {"encoding": "o200k_base", "contexto": None, "precio_in": 5.00, "precio_out": 30.00},
     # Anthropic
     "Claude Opus 5.5": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 4.00, "precio_out": 20.00},
     "Claude Sonnet 5.5": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 2.00, "precio_out": 10.00},
@@ -196,7 +253,10 @@ with st.sidebar:
     st.header("⚙️ Configuración")
     nombre_modelo = st.selectbox("Modelo de IA", list(MODELOS.keys()))
     modelo = MODELOS[nombre_modelo]
-    st.metric("Límite de contexto", f"{modelo['contexto']:,} tokens")
+    st.metric(
+        "Límite de contexto",
+        f"{modelo['contexto']:,} tokens" if modelo["contexto"] else "No publicado",
+    )
     st.divider()
     st.subheader("📤 Respuesta esperada")
     tipo_respuesta = st.radio(
@@ -240,19 +300,40 @@ c4.metric("Costo estimado", f"${costo_usd:,.4f} USD", help="Tarifa estándar ofi
 if usa_tarifa_larga:
     st.caption(f"ℹ️ El prompt supera el umbral de tarifa larga de {nombre_modelo}; el costo usa precios de prompt largo.")
 
+# --- Comparativa de costo entre todos los modelos -------------------------
+st.subheader("⚖️ Comparativa de costo entre modelos")
+conteos = {}
+filas = []
+for nombre, datos in MODELOS.items():
+    encoding = datos["encoding"]
+    if encoding not in conteos:
+        conteos[encoding] = contar_tokens(prompt, encoding)
+    costo, _ = calcular_costo(datos, conteos[encoding], tokens_salida)
+    filas.append({"Modelo": nombre, "Costo estimado (USD)": costo, "Tokens de entrada": conteos[encoding]})
+comparativa = pd.DataFrame(filas).sort_values("Costo estimado (USD)").reset_index(drop=True)
+st.dataframe(
+    comparativa,
+    hide_index=True,
+    use_container_width=True,
+    column_config={"Costo estimado (USD)": st.column_config.NumberColumn(format="$%.5f")},
+)
+
 # --- Barra de progreso del contexto --------------------------------------
 st.subheader("🧠 Contexto total acumulado")
-ratio = total_predicho / modelo["contexto"]
-st.progress(min(ratio, 1.0), text=f"{total_predicho:,} / {modelo['contexto']:,} tokens ({ratio:.2%})")
+if modelo["contexto"]:
+    ratio = total_predicho / modelo["contexto"]
+    st.progress(min(ratio, 1.0), text=f"{total_predicho:,} / {modelo['contexto']:,} tokens ({ratio:.2%})")
 
-if tokens_entrada > modelo["contexto"]:
-    st.error(f"❌ El prompt supera el límite de contexto de {nombre_modelo}. Reduce el texto o cambia de modelo.")
-elif total_predicho > modelo["contexto"]:
-    st.error("❌ La entrada más la salida estimada superan el contexto. La respuesta podría cortarse.")
-elif ratio > 0.8:
-    st.warning("⚠️ Estás usando más del 80% del contexto disponible.")
+    if tokens_entrada > modelo["contexto"]:
+        st.error(f"❌ El prompt supera el límite de contexto de {nombre_modelo}. Reduce el texto o cambia de modelo.")
+    elif total_predicho > modelo["contexto"]:
+        st.error("❌ La entrada más la salida estimada superan el contexto. La respuesta podría cortarse.")
+    elif ratio > 0.8:
+        st.warning("⚠️ Estás usando más del 80% del contexto disponible.")
+    else:
+        st.success("✅ El consumo previsto cabe cómodamente en el contexto del modelo.")
 else:
-    st.success("✅ El consumo previsto cabe cómodamente en el contexto del modelo.")
+    st.info(f"ℹ️ {nombre_modelo}: el proveedor no publica su límite de contexto, así que no se muestra la barra.")
 
 # --- Recomendaciones de optimización -------------------------------------
 st.subheader("💡 Recomendaciones de Optimización")
