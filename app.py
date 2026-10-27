@@ -16,16 +16,33 @@ import tiktoken
 # Los límites de contexto no aparecen en esas páginas: son de otras fuentes.
 # ---------------------------------------------------------------------------
 MODELOS = {
-    # OpenAI
+    # OpenAI (catálogo de modelos: developers.openai.com/api/docs/models)
+    "GPT-6 Astra": {
+        "encoding": "o200k_base", "contexto": 1_050_000,
+        "precio_in": 10.00, "precio_out": 50.00,
+        "umbral": 272_000, "precio_in_largo": 20.00, "precio_out_largo": 75.00,
+    },
+    "GPT-6.1 Sol": {
+        "encoding": "o200k_base", "contexto": 1_050_000,
+        "precio_in": 2.00, "precio_out": 10.00,
+        "umbral": 272_000, "precio_in_largo": 4.00, "precio_out_largo": 15.00,
+    },
+    "GPT-6.1 Terra": {
+        "encoding": "o200k_base", "contexto": 1_050_000,
+        "precio_in": 1.00, "precio_out": 5.00,
+        "umbral": 272_000, "precio_in_largo": 2.00, "precio_out_largo": 7.50,
+    },
+    "GPT-6 Luna": {
+        "encoding": "o200k_base", "contexto": 1_050_000,
+        "precio_in": 0.10, "precio_out": 0.50,
+        "umbral": 272_000, "precio_in_largo": 0.20, "precio_out_largo": 0.75,
+    },
     "GPT-5.4": {
         "encoding": "o200k_base", "contexto": 272_000,
         "precio_in": 2.50, "precio_out": 15.00,
         "umbral": 272_000, "precio_in_largo": 5.00, "precio_out_largo": 22.50,
     },
     "GPT-5.4 mini": {"encoding": "o200k_base", "contexto": 400_000, "precio_in": 0.75, "precio_out": 4.50},
-    "GPT-5.4 nano": {"encoding": "o200k_base", "contexto": 400_000, "precio_in": 0.20, "precio_out": 1.25},
-    "GPT-4o": {"encoding": "o200k_base", "contexto": 128_000, "precio_in": 2.50, "precio_out": 10.00},
-    "GPT-4o mini": {"encoding": "o200k_base", "contexto": 128_000, "precio_in": 0.15, "precio_out": 0.60},
     # Anthropic
     "Claude Opus 5.5": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 4.00, "precio_out": 20.00},
     "Claude Sonnet 5.5": {"encoding": "cl100k_base", "contexto": 1_000_000, "precio_in": 2.00, "precio_out": 10.00},
